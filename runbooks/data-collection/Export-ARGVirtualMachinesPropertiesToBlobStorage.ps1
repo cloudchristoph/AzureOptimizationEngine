@@ -92,7 +92,7 @@ if (-not([string]::IsNullOrEmpty($TargetSubscription)))
 }
 else
 {
-    $subscriptions = Get-AzSubscription | ForEach-Object { "$($_.Id)"}
+    $subscriptions = Get-AzSubscription | Where-Object { $_.State -eq "Enabled" } | ForEach-Object { "$($_.Id)"}
     $subscriptionSuffix = $cloudSuffix + "all"
 }
 
@@ -176,9 +176,7 @@ do
 #>
 
 $datetime = (Get-Date).ToUniversalTime()
-$hour = $datetime.Hour
-$min = $datetime.Minute
-$timestamp = $datetime.ToString("yyyy-MM-ddT$($hour):$($min):00.000Z")
+$timestamp = $datetime.ToString("yyyy-MM-ddTHH:mm:00.000Z")
 $statusDate = $datetime.ToString("yyyy-MM-dd")
 
 Write-Output "Building $($armVmsTotal.Count) ARM VM entries"
@@ -204,7 +202,7 @@ foreach ($vm in $armVmsTotal)
         VMName = $vm.name.ToLower()
         DeploymentModel = 'ARM'
         InstanceId = $vm.id.ToLower()
-        VMSize = $vmSize.name
+        VMSize = $vm.properties.hardwareProfile.vmSize
         CoresCount = $vmSize.NumberOfCores
         MemoryMB = $vmSize.MemoryInMB
         OSType = $vm.properties.storageProfile.osDisk.osType
@@ -244,7 +242,7 @@ foreach ($vm in $classicVmsTotal)
         DeploymentModel = 'Classic'
         Location = $vm.location
         InstanceId = $vm.id.ToLower()
-        VMSize = $vmSize.name
+        VMSize = $vm.properties.hardwareProfile.size
         CoresCount = $vmSize.NumberOfCores
         MemoryMB = $vmSize.MemoryInMB
         OSType = $vm.properties.storageProfile.operatingSystemDisk.operatingSystem

@@ -48,7 +48,6 @@ if (-not($StorageBlobsPageSize -gt 0))
 }
 
 $SqlTimeout = 120
-$Timestampfield = "Timestamp" 
 $LogAnalyticsIngestControlTable = "LogAnalyticsIngestControl"
 
 Write-Output "Logging in to Azure with $authenticationOption..."
@@ -87,7 +86,7 @@ Function Build-OMSSignature ($workspaceId, $sharedKey, $date, $contentLength, $m
 }
 
 # Function to create and post the request
-Function Post-OMSData($workspaceId, $sharedKey, $body, $logType) {
+Function Post-OMSData($workspaceId, $sharedKey, $body, $logType, $TimeStampField) {
     $method = "POST"
     $contentType = "application/json"
     $resource = "/api/logs"
@@ -98,7 +97,6 @@ Function Post-OMSData($workspaceId, $sharedKey, $body, $logType) {
         -sharedKey $sharedKey `
         -date $rfc1123date `
         -contentLength $contentLength `
-        -fileName $fileName `
         -method $method `
         -contentType $contentType `
         -resource $resource
@@ -168,7 +166,7 @@ foreach ($blob in $allblobs) {
             $sqlAdapter = New-Object System.Data.SqlClient.SqlDataAdapter
             $sqlAdapter.SelectCommand = $Cmd
             $controlRows = New-Object System.Data.DataTable
-            $sqlAdapter.Fill($controlRows)            
+            $sqlAdapter.Fill($controlRows) | Out-Null
             $connectionSuccess = $true
         }
         catch {
@@ -185,6 +183,9 @@ foreach ($blob in $allblobs) {
 
     $controlRow = $controlRows[0]
 
+    $Conn.Close()    
+    $Conn.Dispose()            
+
     $lastProcessedLine = $controlRow.LastProcessedLine
     $lastProcessedDateTime = $controlRow.LastProcessedDateTime.ToUniversalTime().ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'fff'Z'")
     $newProcessedTime = $blob.LastModified.ToUniversalTime().ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'fff'Z'")
@@ -196,6 +197,19 @@ foreach ($blob in $allblobs) {
         $logname = $lognamePrefix + $controlRow.LogAnalyticsSuffix
         $linesProcessed = 0
         $csvObjectSplitted = @()
+
+        if ($null -eq $csvObject)
+        {
+            $recCount = 0
+        }
+        elseif ($null -eq $csvObject.Count)
+        {
+            $recCount = 1
+        }
+        else
+        {
+            $recCount = $csvObject.Count    
+        }
 
         if ($recCount -gt 1)
         {
@@ -214,7 +228,7 @@ foreach ($blob in $allblobs) {
             $currentObjectLines = $csvObjectSplitted[$i].Count
             if ($lastProcessedLine -lt $linesProcessed) {				
 			    $jsonObject = ConvertTo-Json -InputObject $csvObjectSplitted[$i]                
-                $res = Post-OMSData -workspaceId $workspaceId -sharedKey $sharedKey -body ([System.Text.Encoding]::UTF8.GetBytes($jsonObject)) -logType $logname
+                $res = Post-OMSData -workspaceId $workspaceId -sharedKey $sharedKey -body ([System.Text.Encoding]::UTF8.GetBytes($jsonObject)) -logType $logname -TimeStampField "Timestamp"
                 If ($res -ge 200 -and $res -lt 300) {
                     Write-Output "Succesfully uploaded $currentObjectLines $($controlTable.LogAnalyticsSuffix) rows to Log Analytics"    
                     $linesProcessed += $currentObjectLines
@@ -232,11 +246,15 @@ foreach ($blob in $allblobs) {
                     }
                     Write-Output "Updating last processed time / line to $($updatedLastProcessedDateTime) / $updatedLastProcessedLine"
                     $sqlStatement = "UPDATE [$LogAnalyticsIngestControlTable] SET LastProcessedLine = $updatedLastProcessedLine, LastProcessedDateTime = '$updatedLastProcessedDateTime' WHERE StorageContainerName = '$storageAccountSinkContainer'"
+                    $Conn = New-Object System.Data.SqlClient.SqlConnection("Server=tcp:$sqlserver,1433;Database=$sqldatabase;User ID=$SqlUsername;Password=$SqlPass;Trusted_Connection=False;Encrypt=True;Connection Timeout=$SqlTimeout;") 
+                    $Conn.Open() 
                     $Cmd=new-object system.Data.SqlClient.SqlCommand
                     $Cmd.Connection = $Conn
                     $Cmd.CommandText = $sqlStatement
                     $Cmd.CommandTimeout=120 
                     $Cmd.ExecuteReader()
+                    $Conn.Close()    
+                    $Conn.Dispose()            
                 }
                 Else {
                     $linesProcessed += $currentObjectLines
@@ -249,6 +267,4 @@ foreach ($blob in $allblobs) {
             }            
         }
     }
-    $Conn.Close()    
-    $Conn.Dispose()            
 }

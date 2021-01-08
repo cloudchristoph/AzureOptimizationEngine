@@ -105,7 +105,7 @@ foreach ($blob in $allblobs) {
             $sqlAdapter = New-Object System.Data.SqlClient.SqlDataAdapter
             $sqlAdapter.SelectCommand = $Cmd
             $controlRows = New-Object System.Data.DataTable
-            $sqlAdapter.Fill($controlRows)            
+            $sqlAdapter.Fill($controlRows) | Out-Null            
             $connectionSuccess = $true
         }
         catch {
@@ -140,6 +140,7 @@ foreach ($blob in $allblobs) {
         Write-Output "About to process $($blob.Name)..."
         Get-AzStorageBlobContent -CloudBlob $blob.ICloudBlob -Context $sa.Context -Force
         $jsonObject = Get-Content -Path $blob.Name | ConvertFrom-Json
+        Write-Output "Blob contains $($jsonObject.Count) results..."
  
         if ($null -eq $jsonObject)
         {
@@ -180,7 +181,8 @@ foreach ($blob in $allblobs) {
                     $sqlStatement = "INSERT INTO [$recommendationsTable] VALUES"
                     for ($i = 0; $i -lt $jsonObjectSplitted[$j].Count; $i++)
                     {
-            
+                        $jsonObjectSplitted[$j][$i].RecommendationDescription = $jsonObjectSplitted[$j][$i].RecommendationDescription.Replace("'", "")
+                        $jsonObjectSplitted[$j][$i].RecommendationAction = $jsonObjectSplitted[$j][$i].RecommendationAction.Replace("'", "")            
                         $additionalInfoString = $jsonObjectSplitted[$j][$i].AdditionalInfo | ConvertTo-Json
                         $tagsString = $jsonObjectSplitted[$j][$i].Tags | ConvertTo-Json
                         $sqlStatement += " (NEWID(), CONVERT(DATETIME, '$($jsonObjectSplitted[$j][$i].Timestamp)'), '$($jsonObjectSplitted[$j][$i].Cloud)'"
@@ -190,7 +192,7 @@ foreach ($blob in $allblobs) {
                         $sqlStatement += ", '$($jsonObjectSplitted[$j][$i].RecommendationDescription)', '$($jsonObjectSplitted[$j][$i].RecommendationAction)'"
                         $sqlStatement += ", '$($jsonObjectSplitted[$j][$i].InstanceId)', '$($jsonObjectSplitted[$j][$i].InstanceName)', '$additionalInfoString'"
                         $sqlStatement += ", '$($jsonObjectSplitted[$j][$i].ResourceGroup)', '$($jsonObjectSplitted[$j][$i].SubscriptionGuid)'"
-                        $sqlStatement += ", $($jsonObjectSplitted[$j][$i].ConfidenceScore), '$tagsString', '$($jsonObjectSplitted[$j][$i].DetailsURL)')"
+                        $sqlStatement += ", $($jsonObjectSplitted[$j][$i].FitScore), '$tagsString', '$($jsonObjectSplitted[$j][$i].DetailsURL)')"
                         if ($i -ne ($jsonObjectSplitted[$j].Count-1))
                         {
                             $sqlStatement += ","
@@ -204,11 +206,20 @@ foreach ($blob in $allblobs) {
                     $Cmd.Connection = $Conn2
                     $Cmd.CommandText = $sqlStatement
                     $Cmd.CommandTimeout=120 
-                    $Cmd.ExecuteReader()
+                    try
+                    {
+                        $Cmd.ExecuteReader()
+                    }
+                    catch
+                    {
+                        Write-Output "Failed statement: $sqlStatement"
+                        throw
+                    }
             
                     $Conn2.Close()                
              
                     $linesProcessed += $currentObjectLines
+                    Write-Output "Processed $linesProcessed lines..."
                     if ($j -eq ($jsonObjectSplitted.Count - 1)) {
                         $lastProcessedLine = -1    
                     }
